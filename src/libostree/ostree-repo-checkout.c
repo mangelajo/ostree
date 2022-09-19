@@ -35,6 +35,8 @@
 #define WHITEOUT_PREFIX ".wh."
 #define OPAQUE_WHITEOUT_NAME ".wh..wh..opq"
 
+#define OVERLAYFS_WHITEOUT_PREFIX ".wh-ostree."
+
 /* Per-checkout call state/caching */
 typedef struct {
   GString *path_buf; /* buffer for real path if filtering enabled */
@@ -603,7 +605,8 @@ checkout_one_file_at (OstreeRepo                        *repo,
 
   /* FIXME - avoid the GFileInfo here */
   g_autoptr(GFileInfo) source_info = NULL;
-  if (!ostree_repo_load_file (repo, checksum, NULL, &source_info, NULL,
+  g_autoptr(GVariant) source_xattrs = NULL;
+  if (!ostree_repo_load_file (repo, checksum, NULL, &source_info, &source_xattrs,
                               cancellable, error))
     return FALSE;
 
@@ -623,6 +626,7 @@ checkout_one_file_at (OstreeRepo                        *repo,
   const gboolean is_unreadable = (!is_symlink && (source_mode & S_IRUSR) == 0);
   const gboolean is_whiteout = (!is_symlink && options->process_whiteouts &&
                                 g_str_has_prefix (destination_name, WHITEOUT_PREFIX));
+  const gboolean is_overlayfs_whiteout = (!is_symlink && g_str_has_prefix (destination_name, OVERLAYFS_WHITEOUT_PREFIX));
   const gboolean is_reg_zerosized = (!is_symlink && g_file_info_get_size (source_info) == 0);
   const gboolean override_user_unreadable = (options->mode == OSTREE_REPO_CHECKOUT_MODE_USER && is_unreadable);
 
@@ -641,6 +645,32 @@ checkout_one_file_at (OstreeRepo                        *repo,
       if (!glnx_shutil_rm_rf_at (destination_dfd, name, cancellable, error))
         return FALSE;
 
+      need_copy = FALSE;
+    }
+  else if (is_overlayfs_whiteout)
+    {
+      const char *name = destination_name + (sizeof (OVERLAYFS_WHITEOUT_PREFIX) - 1);
+
+      if (!name[0])
+        return glnx_throw (error, "Invalid empty overlayfs whiteout '%s'", name);
+
+      g_assert (name[0] != '/'); /* Sanity */
+
+      if (mknodat(destination_dfd, name, (source_mode & ~S_IFMT) | S_IFCHR, (dev_t)0) < 0)
+          return glnx_throw_errno_prefix (error, "Creating whiteout char device");
+      if (options->mode != OSTREE_REPO_CHECKOUT_MODE_USER)
+        {
+          if (source_xattrs != NULL &&
+              !glnx_dfd_name_set_all_xattrs(destination_dfd, name, source_xattrs,
+                                              cancellable, error))
+              return glnx_throw_errno_prefix (error, "Setting xattrs for whiteout char device");
+
+          if (TEMP_FAILURE_RETRY(fchownat(destination_dfd, name,
+                                          g_file_info_get_attribute_uint32 (source_info, "unix::uid"),
+                                          g_file_info_get_attribute_uint32 (source_info, "unix::gid"),
+                                          AT_SYMLINK_NOFOLLOW) < 0))
+              return glnx_throw_errno_prefix (error, "fchownat");
+        }
       need_copy = FALSE;
     }
   else if (is_reg_zerosized || override_user_unreadable)
