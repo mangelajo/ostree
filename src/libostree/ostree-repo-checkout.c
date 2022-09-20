@@ -35,7 +35,7 @@
 #define WHITEOUT_PREFIX ".wh."
 #define OPAQUE_WHITEOUT_NAME ".wh..wh..opq"
 
-#define OVERLAYFS_WHITEOUT_PREFIX ".wh-ostree."
+#define OVERLAYFS_WHITEOUT_PREFIX ".ostree-wh."
 
 /* Per-checkout call state/caching */
 typedef struct {
@@ -647,7 +647,7 @@ checkout_one_file_at (OstreeRepo                        *repo,
 
       need_copy = FALSE;
     }
-  else if (is_overlayfs_whiteout)
+  else if (is_overlayfs_whiteout && options->process_passthrough_whiteouts)
     {
       const char *name = destination_name + (sizeof (OVERLAYFS_WHITEOUT_PREFIX) - 1);
 
@@ -670,8 +670,10 @@ checkout_one_file_at (OstreeRepo                        *repo,
                                           g_file_info_get_attribute_uint32 (source_info, "unix::gid"),
                                           AT_SYMLINK_NOFOLLOW) < 0))
               return glnx_throw_errno_prefix (error, "fchownat");
+          if (TEMP_FAILURE_RETRY (fchmodat (destination_dfd, name, source_mode, AT_SYMLINK_NOFOLLOW)) < 0)
+              return glnx_throw_errno_prefix (error, "fchmodat");
         }
-      need_copy = FALSE;
+      return TRUE;
     }
   else if (is_reg_zerosized || override_user_unreadable)
     {
