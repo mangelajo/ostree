@@ -245,6 +245,12 @@ setup_test_repository () {
     ln -s nonexistent baz/alink
     mkdir baz/another/
     echo x > baz/another/y
+
+    mkdir whiteouts
+    touch whiteouts/.ostree-wh.whiteout
+    touch whiteouts/.ostree-wh.whiteout2
+    chmod 755 whiteouts/.ostree-wh.whiteout2
+
     umask "${oldumask}"
 
     cd ${test_tmpdir}/files
@@ -406,7 +412,7 @@ setup_os_repository () {
     mkdir osdata
     cd osdata
     kver=3.6.0
-    mkdir -p usr/bin ${bootdir} usr/lib/modules/${kver} usr/share usr/etc
+    mkdir -p usr/bin ${bootdir} usr/lib/modules/${kver} usr/share usr/etc usr/container/layers/abcd
     kernel_path=${bootdir}/vmlinuz
     initramfs_path=${bootdir}/initramfs.img
     # the HMAC file is only in /usr/lib/modules
@@ -449,6 +455,13 @@ EOF
     mkdir -p usr/etc/testdirectory
     echo "a default daemon file" > usr/etc/testdirectory/test
 
+    # overlayfs whiteout passhthrough marker file
+    touch usr/container/layers/abcd/.ostree-wh.whiteout
+    chmod 400 usr/container/layers/abcd/.ostree-wh.whiteout
+
+    # overlayfs whiteout passhthrough marker file
+    touch usr/container/layers/abcd/.ostree-wh.whiteout2
+    chmod 777 usr/container/layers/abcd/.ostree-wh.whiteout2
     ${CMD_PREFIX} ostree --repo=${test_tmpdir}/testos-repo commit ${bootable_flag} --add-metadata-string version=1.0.9 -b testos/buildmain/x86_64-runtime -s "Build"
 
     # Ensure these commits have distinct second timestamps
