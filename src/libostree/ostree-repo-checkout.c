@@ -585,6 +585,108 @@ checkout_file_hardlink (OstreeRepo                          *self,
 }
 
 static gboolean
+_checkout_overlayfs_whiteout_at_no_overwrite (OstreeRepoCheckoutAtOptions    *options,
+                                              int                             destination_dfd,
+                                              const char                     *destination_name,
+                                              GFileInfo                      *file_info,
+                                              GVariant                       *xattrs,
+                                              GCancellable                   *cancellable,
+                                              GError                        **error)
+{
+  guint32 file_mode = g_file_info_get_attribute_uint32 (file_info, "unix::mode");
+  if (mknodat(destination_dfd, destination_name, (file_mode & ~S_IFMT) | S_IFCHR, (dev_t)0) < 0)
+    return glnx_throw_errno_prefix (error, "Creating whiteout char device");
+  if (options->mode != OSTREE_REPO_CHECKOUT_MODE_USER)
+    {
+      if (xattrs != NULL &&
+          !glnx_dfd_name_set_all_xattrs(destination_dfd, destination_name, xattrs,
+                                          cancellable, error))
+          return glnx_throw_errno_prefix (error, "Setting xattrs for whiteout char device");
+
+      if (TEMP_FAILURE_RETRY(fchownat(destination_dfd, destination_name,
+                                      g_file_info_get_attribute_uint32 (file_info, "unix::uid"),
+                                      g_file_info_get_attribute_uint32 (file_info, "unix::gid"),
+                                      AT_SYMLINK_NOFOLLOW) < 0))
+          return glnx_throw_errno_prefix (error, "fchownat");
+      if (TEMP_FAILURE_RETRY (fchmodat (destination_dfd, destination_name, file_mode,
+                                        AT_SYMLINK_NOFOLLOW)) < 0)
+          return glnx_throw_errno_prefix (error, "fchmodat");
+    }
+
+  return TRUE;
+}
+
+static gboolean
+_checkout_overlayfs_whiteout_at (OstreeRepo                     *repo,
+                                 OstreeRepoCheckoutAtOptions    *options,
+                                 int                             destination_dfd,
+                                 const char                     *destination_name,
+                                 GFileInfo                      *file_info,
+                                 GVariant                       *xattrs,
+                                 GCancellable                   *cancellable,
+                                 GError                        **error)
+{
+  if (_checkout_overlayfs_whiteout_at_no_overwrite(options, destination_dfd, destination_name,
+                                                   file_info, xattrs, cancellable, error))
+    return TRUE;
+
+  if (!error || !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_EXISTS))
+    return FALSE;
+
+  guint32 uid = g_file_info_get_attribute_uint32 (file_info, "unix::uid");
+  guint32 gid = g_file_info_get_attribute_uint32 (file_info, "unix::gid");
+  guint32 file_mode = g_file_info_get_attribute_uint32 (file_info, "unix::mode");
+
+  switch(options->overwrite_mode)
+    {
+      case OSTREE_REPO_CHECKOUT_OVERWRITE_NONE:
+        return FALSE;
+      case OSTREE_REPO_CHECKOUT_OVERWRITE_UNION_FILES:
+        g_clear_error(error);
+        if (!ot_ensure_unlinked_at (destination_dfd, destination_name, error))
+          return FALSE;
+        return _checkout_overlayfs_whiteout_at_no_overwrite(options, destination_dfd, destination_name,
+                                                   file_info, xattrs, cancellable, error);
+      case OSTREE_REPO_CHECKOUT_OVERWRITE_ADD_FILES:
+        g_clear_error(error);
+        return TRUE;
+
+      case OSTREE_REPO_CHECKOUT_OVERWRITE_UNION_IDENTICAL:
+        struct stat dest_stbuf;
+        g_clear_error(error);
+        if (!glnx_fstatat(destination_dfd, destination_name, &dest_stbuf, AT_SYMLINK_NOFOLLOW,
+                          error))
+          return FALSE;
+        if (!(repo->disable_xattrs || repo->mode == OSTREE_REPO_MODE_BARE_USER_ONLY))
+          {
+            g_autoptr(GVariant) fs_xattrs;
+            if (!glnx_dfd_name_get_all_xattrs (destination_dfd, destination_name,
+                                               &fs_xattrs, cancellable, error))
+              return FALSE;
+            if (!g_variant_equal(fs_xattrs, xattrs))
+              return glnx_throw(error, "existing destination file %s xattrs don't match",
+                                destination_name);
+          }
+        if (options->mode != OSTREE_REPO_CHECKOUT_MODE_USER)
+          {
+            if (gid != dest_stbuf.st_gid)
+              return glnx_throw(error, "existing destination file %s does not match gid %d",
+                                destination_name, gid);
+
+            if (uid != dest_stbuf.st_uid)
+              return glnx_throw(error, "existing destination file %s does not match uid %d",
+                                destination_name, gid);
+
+            if ((file_mode & ALLPERMS) != (dest_stbuf.st_mode & ALLPERMS))
+              return glnx_throw(error, "existing destination file %s does not match mode %o",
+                                destination_name, file_mode);
+          }
+        break;
+    }
+    return TRUE;
+}
+
+static gboolean
 checkout_one_file_at (OstreeRepo                        *repo,
                       OstreeRepoCheckoutAtOptions       *options,
                       CheckoutState                     *state,
@@ -656,24 +758,8 @@ checkout_one_file_at (OstreeRepo                        *repo,
 
       g_assert (name[0] != '/'); /* Sanity */
 
-      if (mknodat(destination_dfd, name, (source_mode & ~S_IFMT) | S_IFCHR, (dev_t)0) < 0)
-          return glnx_throw_errno_prefix (error, "Creating whiteout char device");
-      if (options->mode != OSTREE_REPO_CHECKOUT_MODE_USER)
-        {
-          if (source_xattrs != NULL &&
-              !glnx_dfd_name_set_all_xattrs(destination_dfd, name, source_xattrs,
-                                              cancellable, error))
-              return glnx_throw_errno_prefix (error, "Setting xattrs for whiteout char device");
-
-          if (TEMP_FAILURE_RETRY(fchownat(destination_dfd, name,
-                                          g_file_info_get_attribute_uint32 (source_info, "unix::uid"),
-                                          g_file_info_get_attribute_uint32 (source_info, "unix::gid"),
-                                          AT_SYMLINK_NOFOLLOW) < 0))
-              return glnx_throw_errno_prefix (error, "fchownat");
-          if (TEMP_FAILURE_RETRY (fchmodat (destination_dfd, name, source_mode, AT_SYMLINK_NOFOLLOW)) < 0)
-              return glnx_throw_errno_prefix (error, "fchmodat");
-        }
-      return TRUE;
+      return _checkout_overlayfs_whiteout_at(repo, options, destination_dfd, name,
+                                             source_info, source_xattrs, cancellable, error);
     }
   else if (is_reg_zerosized || override_user_unreadable)
     {
