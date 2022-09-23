@@ -148,6 +148,20 @@ if ! have_selinux_relabel; then
 fi
 echo done
 
+# whiteout char 0:0 devices can be created as regular users, but
+# cannot be created inside containers mounted via overlayfs
+can_create_whiteout_devices() {
+    mknod -m 777 ${test_tmpdir}/.test-whiteout c 0 0 || return 1
+    rm ${test_tmpdir}/.test-whiteout
+    return 0
+}
+
+echo -n checking for overlayfs whiteouts...
+if ! can_create_whiteout_devices; then
+    export OSTREE_NO_WHITEOUTS=1
+fi
+echo done
+
 if test -n "${OT_TESTS_DEBUG:-}"; then
     set -x
 fi
@@ -246,11 +260,14 @@ setup_test_repository () {
     mkdir baz/another/
     echo x > baz/another/y
 
-    mkdir whiteouts
-    touch whiteouts/.ostree-wh.whiteout
-    touch whiteouts/.ostree-wh.whiteout2
-    chmod 755 whiteouts/.ostree-wh.whiteout2
-
+    # if we are running inside a container we cannot test
+    # the overlayfs whiteout marker passthrough
+    if ! test -n "${OSTREE_NO_WHITEOUTS:-}"; then
+        mkdir whiteouts
+        touch whiteouts/.ostree-wh.whiteout
+        touch whiteouts/.ostree-wh.whiteout2
+        chmod 755 whiteouts/.ostree-wh.whiteout2
+    fi
     umask "${oldumask}"
 
     cd ${test_tmpdir}/files
@@ -455,13 +472,17 @@ EOF
     mkdir -p usr/etc/testdirectory
     echo "a default daemon file" > usr/etc/testdirectory/test
 
-    # overlayfs whiteout passhthrough marker file
-    touch usr/container/layers/abcd/.ostree-wh.whiteout
-    chmod 400 usr/container/layers/abcd/.ostree-wh.whiteout
+    # if we are running inside a container we cannot test
+    # the overlayfs whiteout marker passthrough
+    if ! test -n "${OSTREE_NO_WHITEOUTS:-}"; then
+        # overlayfs whiteout passhthrough marker files
+        touch usr/container/layers/abcd/.ostree-wh.whiteout
+        chmod 400 usr/container/layers/abcd/.ostree-wh.whiteout
 
-    # overlayfs whiteout passhthrough marker file
-    touch usr/container/layers/abcd/.ostree-wh.whiteout2
-    chmod 777 usr/container/layers/abcd/.ostree-wh.whiteout2
+        touch usr/container/layers/abcd/.ostree-wh.whiteout2
+        chmod 777 usr/container/layers/abcd/.ostree-wh.whiteout2
+    fi
+
     ${CMD_PREFIX} ostree --repo=${test_tmpdir}/testos-repo commit ${bootable_flag} --add-metadata-string version=1.0.9 -b testos/buildmain/x86_64-runtime -s "Build"
 
     # Ensure these commits have distinct second timestamps
@@ -598,6 +619,22 @@ skip_one_without_user_xattrs () {
 skip_without_user_xattrs () {
     if ! have_user_xattrs; then
         skip "this test requires xattr support"
+    fi
+}
+
+# Usage: if ! skip_one_without_whiteouts_devices; then ... more tests ...; fi
+skip_one_without_whiteouts_devices() {
+    if ! can_create_whiteout_devices; then
+        echo "ok # SKIP - this test requires whiteout device support (test outside containers)"
+        return 0
+    else
+        return 1
+    fi
+}
+
+skip_without_whiteouts_devices () {
+    if ! can_create_whiteout_devices; then
+        skip "this test requires whiteout device support (test outside containers)"
     fi
 }
 

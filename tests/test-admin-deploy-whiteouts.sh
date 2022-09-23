@@ -21,6 +21,8 @@ set -euox pipefail
 
 . $(dirname $0)/libtest.sh
 
+skip_without_whiteouts_devices
+
 # Exports OSTREE_SYSROOT so --sysroot not needed.
 setup_os_repository "archive" "syslinux"
 ${CMD_PREFIX} ostree --repo=sysroot/ostree/repo pull-local --remote=testos testos-repo testos/buildmain/x86_64-runtime
