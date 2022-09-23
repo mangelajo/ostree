@@ -637,6 +637,8 @@ _checkout_overlayfs_whiteout_at (OstreeRepo                     *repo,
   guint32 gid = g_file_info_get_attribute_uint32 (file_info, "unix::gid");
   guint32 file_mode = g_file_info_get_attribute_uint32 (file_info, "unix::mode");
 
+  struct stat dest_stbuf;
+
   switch(options->overwrite_mode)
     {
       case OSTREE_REPO_CHECKOUT_OVERWRITE_NONE:
@@ -652,7 +654,6 @@ _checkout_overlayfs_whiteout_at (OstreeRepo                     *repo,
         return TRUE;
 
       case OSTREE_REPO_CHECKOUT_OVERWRITE_UNION_IDENTICAL:
-        struct stat dest_stbuf;
         g_clear_error(error);
         if (!glnx_fstatat(destination_dfd, destination_name, &dest_stbuf, AT_SYMLINK_NOFOLLOW,
                           error))
