@@ -151,7 +151,7 @@ echo done
 # whiteout char 0:0 devices can be created as regular users, but
 # cannot be created inside containers mounted via overlayfs
 can_create_whiteout_devices() {
-    mknod -m 777 ${test_tmpdir}/.test-whiteout c 0 0 || return 1
+    mknod -m 000 ${test_tmpdir}/.test-whiteout c 0 0 || return 1
     rm ${test_tmpdir}/.test-whiteout
     return 0
 }
