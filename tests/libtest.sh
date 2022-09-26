@@ -152,7 +152,7 @@ echo done
 # cannot be created inside containers mounted via overlayfs
 can_create_whiteout_devices() {
     mknod -m 000 ${test_tmpdir}/.test-whiteout c 0 0 || return 1
-    rm ${test_tmpdir}/.test-whiteout
+    rm -f ${test_tmpdir}/.test-whiteout
     return 0
 }
 

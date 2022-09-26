@@ -71,6 +71,6 @@ mkdir -p test-overlays
 date > test-overlays/overlaid-file
 $OSTREE commit ${COMMIT_ARGS} -b test-base --base test2 --owner-uid 42 --owner-gid 42 test-overlays/
 $OSTREE ls -R test-base > ls.txt
-assert_streq "$(wc -l < ls.txt)" 14
+assert_streq "$(wc -l < ls.txt)" 17
 assert_streq "$(grep '42.*42' ls.txt | wc -l)" 2
 echo "ok commit overlay base"
