@@ -608,8 +608,7 @@ _checkout_overlayfs_whiteout_at_no_overwrite (OstreeRepoCheckoutAtOptions    *op
                                       g_file_info_get_attribute_uint32 (file_info, "unix::gid"),
                                       AT_SYMLINK_NOFOLLOW) < 0))
           return glnx_throw_errno_prefix (error, "fchownat");
-      if (TEMP_FAILURE_RETRY (fchmodat (destination_dfd, destination_name, file_mode & ~S_IFMT,
-                                        AT_SYMLINK_NOFOLLOW)) < 0)
+      if (TEMP_FAILURE_RETRY (fchmodat (destination_dfd, destination_name, file_mode & ~S_IFMT, 0)) < 0)
           return glnx_throw_errno_prefix (error, "fchmodat %s to 0%o", destination_name, file_mode & ~S_IFMT);
     }
 
